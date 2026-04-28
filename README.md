@@ -1,236 +1,102 @@
-# 🔔 Notification Service — Scalable, Real-Time, Multi-Channel
+# 🔔 Notification Service
 
-A production-ready, independently deployable notification microservice built in **Go**. Supports **Email, SMS, and Push** notifications with **Kafka-based async processing**, **priority queues**, **circuit breakers**, **retry with exponential backoff**, and **dead-letter queues**.
+A Go microservice for handling email, SMS, and push notifications with Kafka-based async processing, circuit breaker pattern, and priority queues. Supports Twilio (SMS), SMTP (Email), and FCM (Push).
+
+> **Note:** For the e-commerce platform, order SMS notifications are now sent directly via MSG91 from the core service. This notification service is for advanced use cases (email, push, bulk notifications).
+
+## 🚀 Quick Start
+
+```bash
+cd notification-service
+go mod tidy
+MONGO_URI="mongodb://localhost:27017/notifications" go run ./cmd/api/
+```
+
+Service starts on **http://localhost:9090**
+
+## ✅ What's Done
+
+| Feature | Status | Details |
+|---------|--------|---------|
+| REST API | ✅ Complete | Send notifications via HTTP endpoint |
+| Kafka Queues | ✅ Complete | Priority queues (HIGH, MEDIUM, LOW) + DLQ |
+| Email Adapter | ✅ Complete | SMTP integration (Gmail, SendGrid, SES) |
+| SMS Adapter | ✅ Complete | Twilio integration |
+| Push Adapter | ✅ Complete | Firebase Cloud Messaging (FCM) |
+| Circuit Breaker | ✅ Complete | Auto-opens on failures, half-open recovery |
+| Worker Pool | ✅ Complete | Concurrent workers with batch processing |
+| MongoDB Storage | ✅ Complete | Notification history and status tracking |
+| Redis Dedup | ✅ Complete | Deduplication to prevent duplicate sends |
+| Retry Logic | ✅ Complete | Configurable retries with backoff |
+| Docker | ✅ Complete | Dockerfile + docker-compose with Kafka, MongoDB, Redis |
+
+## ❌ What's Left To Do
+
+### 🔴 Must Have (Before Production)
+- [ ] **Kafka Setup** — Need Kafka running (use docker-compose or Confluent Cloud free tier)
+- [ ] **SMTP Credentials** — Set `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD` for email
+- [ ] **Twilio Account** — Set `TWILIO_SID`, `TWILIO_TOKEN`, `TWILIO_FROM` for SMS (or skip — core service uses MSG91 directly)
+- [ ] **FCM Server Key** — Set `FCM_SERVER_KEY` for push notifications (or skip if not needed)
+
+### 🟡 Should Have
+- [ ] **Email Templates** — HTML templates for order confirmation, shipping updates, welcome email
+- [ ] **Notification Preferences** — User opt-in/opt-out per channel
+- [ ] **Scheduled Notifications** — Send at specific time (promotional campaigns)
+- [ ] **Bulk Send** — Batch notifications to multiple recipients
+- [ ] **Delivery Tracking** — Track email opens, click-through rates
+- [ ] **Admin API** — List all notifications, retry failed, view analytics
+- [ ] **Rate Limiting** — Per-recipient rate limiting to prevent spam
+
+### 🔵 Nice To Have
+- [ ] **WhatsApp Integration** — WhatsApp Business API for notifications
+- [ ] **Webhook Callbacks** — Notify the calling service when notification is delivered/failed
+- [ ] **Template Engine** — Dynamic templates with variable substitution
+- [ ] **Multi-tenant** — Support multiple apps/services
+- [ ] **Dashboard UI** — Web UI for notification history and analytics
+- [ ] **SNS/SQS Support** — AWS-native alternative to Kafka
 
 ## 🏗 Architecture
 
 ```
-Client → API Gateway → Notification API (Gin)
-                            ↓
-                      MongoDB (persist TRIGGERED)
-                            ↓
-                      Kafka (priority topics)
-                            ↓
-                      Worker (consumers)
-                            ↓
-                ┌───────────┼───────────┐
-                ↓           ↓           ↓
-          EmailAdapter  SMSAdapter  PushAdapter
-          (SMTP)        (Twilio)    (FCM)
-                            ↓
-                      MongoDB (update SENT/FAILED)
-                      Redis (cache status)
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Go 1.22+
-- MongoDB (`brew services start mongodb-community`)
-- Redis (`brew services start redis`)
-- Kafka (`docker-compose up kafka` or `brew install kafka`)
-
-### Run with Docker Compose (Recommended)
-```bash
-docker-compose up --build
-```
-
-### Run Locally (3 terminals)
-
-**Terminal 1 — Kafka** (via Docker):
-```bash
-docker-compose up kafka
-```
-
-**Terminal 2 — API Server**:
-```bash
-go mod tidy
-go run ./cmd/api/ -mode=api
-```
-
-**Terminal 3 — Worker**:
-```bash
-go run ./cmd/api/ -mode=worker
-```
-
-**Or run both in one process:**
-```bash
-go run ./cmd/api/ -mode=both
-```
-
-## 📡 API Reference
-
-### POST /notification/send
-Send a single notification.
-```json
-{
-  "type": "EMAIL",
-  "recipient": "user@example.com",
-  "metadata": {
-    "subject": "Welcome!",
-    "body": "Thanks for signing up."
-  },
-  "trigger_type": "INSTANT",
-  "priority": "HIGH"
-}
-```
-Response: `202 Accepted`
-```json
-{
-  "notification_id": "uuid",
-  "status": "TRIGGERED"
-}
-```
-
-### POST /notification/bulk
-Send bulk campaign notifications.
-```json
-{
-  "campaign_id": "welcome-campaign-2024",
-  "type": "EMAIL",
-  "recipients": ["a@x.com", "b@x.com", "c@x.com"],
-  "metadata": {
-    "subject": "Special Offer!",
-    "body": "50% off today only."
-  },
-  "priority": "LOW"
-}
-```
-Response: `202 Accepted`
-```json
-{
-  "campaign_id": "welcome-campaign-2024",
-  "total": 3,
-  "accepted": 3,
-  "status": "PROCESSING"
-}
-```
-
-### GET /notification/status/:id
-Get notification delivery status.
-```json
-{
-  "notification_id": "uuid",
-  "recipient": "user@example.com",
-  "type": "EMAIL",
-  "status": "SENT",
-  "priority": "HIGH",
-  "retry_count": 0,
-  "created_at": "2024-01-01T00:00:00Z",
-  "sent_at": "2024-01-01T00:00:02Z"
-}
-```
-
-## 🗂 Project Structure
-
-```
 notification-service/
-├── cmd/api/main.go              # Entry point (api/worker/both modes)
+├── cmd/api/main.go                    # Entry point
 ├── internal/
-│   ├── config/                  # Environment configuration
-│   ├── models/                  # Notification entity, request/response types
-│   ├── handler/                 # HTTP API handlers (send, bulk, status)
-│   ├── queue/                   # Kafka producer (multi-topic, batched)
-│   ├── worker/                  # Kafka consumers, routing, retry logic
-│   ├── adapter/                 # Channel adapter interface
-│   │   ├── email/               # SMTP email adapter
-│   │   ├── sms/                 # Twilio SMS adapter
-│   │   └── push/                # FCM push adapter
-│   ├── store/                   # MongoDB + Redis data layer
-│   └── circuit/                 # Circuit breaker pattern
-├── docker-compose.yml           # Kafka + MongoDB + Redis + Service
+│   ├── handler/handler.go             # REST API handler
+│   ├── worker/worker.go               # Kafka consumer + processor
+│   ├── queue/producer.go              # Kafka producer
+│   ├── adapter/
+│   │   ├── adapter.go                 # Adapter interface
+│   │   ├── email/email.go             # SMTP email sender
+│   │   ├── sms/sms.go                 # Twilio SMS sender
+│   │   └── push/push.go              # FCM push sender
+│   ├── circuit/breaker.go             # Circuit breaker pattern
+│   ├── store/
+│   │   ├── mongo.go                   # MongoDB persistence
+│   │   └── redis.go                   # Redis dedup cache
+│   ├── models/notification.go         # Data models
+│   └── config/config.go               # Configuration
+├── docker-compose.yml                 # Kafka + MongoDB + Redis + Service
 ├── Dockerfile
-└── README.md
+└── go.mod
 ```
-
-## 🔑 Key Design Decisions
-
-### Priority-Based Kafka Topics
-- `notification-high` — OTP, payment confirmations (500ms poll)
-- `notification-medium` — Account updates (1s poll)
-- `notification-low` — Marketing, bulk campaigns (2s poll)
-
-### Retry with Exponential Backoff
-- 3 retries max (configurable)
-- Backoff: 2s → 4s → 8s
-- After max retries → DLQ
-
-### Circuit Breaker (per channel)
-- Opens after 5 consecutive failures
-- Half-open after 30s
-- 2 successes to close
-
-### Fallback Strategy
-- PUSH fails → automatically tries SMS
-
-### Deduplication
-- Redis-based dedup cache (5-minute TTL)
-- Prevents duplicate sends for same recipient+type
-
-### Idempotency
-- Each notification gets a UUID
-- Status tracked: TRIGGERED → PROCESSING → SENT/FAILED/DEAD_LETTERED
 
 ## ⚙️ Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `9090` | API port |
-| `MONGO_URI` | `mongodb://localhost:27017/notifications` | MongoDB |
-| `REDIS_ADDR` | `localhost:6379` | Redis |
-| `KAFKA_BROKERS` | `localhost:9092` | Kafka brokers |
-| `SMTP_HOST` | — | SMTP server (empty = mock) |
-| `SMTP_PORT` | `587` | SMTP port |
-| `SMTP_USER` | — | SMTP username |
-| `SMTP_PASSWORD` | — | SMTP password |
-| `SMTP_FROM` | `noreply@example.com` | From address |
-| `TWILIO_SID` | — | Twilio Account SID (empty = mock) |
-| `TWILIO_TOKEN` | — | Twilio Auth Token |
-| `TWILIO_FROM` | — | Twilio phone number |
-| `FCM_SERVER_KEY` | — | Firebase Cloud Messaging key (empty = mock) |
-
-> **Dev mode:** All adapters mock when credentials aren't configured — they log the notification instead of actually sending.
-
-## 🧪 Testing
-
-```bash
-# Health check
-curl http://localhost:9090/health
-
-# Send email notification
-curl -X POST http://localhost:9090/notification/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "EMAIL",
-    "recipient": "test@example.com",
-    "metadata": {"subject": "Test", "body": "Hello!"},
-    "priority": "HIGH"
-  }'
-
-# Send SMS
-curl -X POST http://localhost:9090/notification/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "SMS",
-    "recipient": "+919876543210",
-    "metadata": {"body": "Your OTP is 123456"},
-    "priority": "HIGH"
-  }'
-
-# Bulk campaign
-curl -X POST http://localhost:9090/notification/bulk \
-  -H "Content-Type: application/json" \
-  -d '{
-    "campaign_id": "test-campaign",
-    "type": "EMAIL",
-    "recipients": ["a@x.com", "b@x.com"],
-    "metadata": {"subject": "Promo", "body": "50% off!"},
-    "priority": "LOW"
-  }'
-
-# Check status
-curl http://localhost:9090/notification/status/{notification_id}
-```
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| PORT | 9090 | No | Service port |
+| MONGO_URI | mongodb://localhost:27017/notifications | **Yes** | MongoDB |
+| REDIS_ADDR | localhost:6379 | Yes | Redis for dedup |
+| KAFKA_BROKERS | localhost:9092 | Yes | Kafka brokers |
+| SMTP_HOST | — | For email | SMTP server |
+| SMTP_PORT | 587 | No | SMTP port |
+| SMTP_USER | — | For email | SMTP username |
+| SMTP_PASSWORD | — | For email | SMTP password |
+| SMTP_FROM | noreply@example.com | No | From address |
+| TWILIO_SID | — | For SMS | Twilio Account SID |
+| TWILIO_TOKEN | — | For SMS | Twilio Auth Token |
+| TWILIO_FROM | — | For SMS | Twilio phone number |
+| FCM_SERVER_KEY | — | For push | Firebase server key |
 
 ## 📄 License
 MIT
